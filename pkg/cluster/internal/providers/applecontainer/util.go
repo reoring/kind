@@ -18,6 +18,7 @@ package applecontainer
 
 import (
 	"encoding/json"
+	"regexp"
 	"runtime"
 	"strings"
 
@@ -36,6 +37,43 @@ func IsAvailable() bool {
 		return false
 	}
 	return strings.HasPrefix(lines[0], "container CLI version")
+}
+
+// dnsDomainRegexp extracts the domain value from the [dns] section of
+// `container system property ls` TOML output
+var dnsDomainRegexp = regexp.MustCompile(`(?s)\[dns\][^[]*?domain\s*=\s*"([^"]+)"`)
+
+// defaultDNSDomain returns the local DNS domain under which the runtime
+// registers container hostnames, or "" if none is usable.
+//
+// Container hostnames resolve between containers only when both:
+//   - a default domain is configured ([dns] domain in the runtime config)
+//   - that domain is registered (`sudo container system dns create <domain>`)
+//
+// When available, node hostnames can be used instead of IPs, which keeps
+// multi-node clusters working across container restarts (IPs are
+// reassigned on restart, names are not).
+func defaultDNSDomain() string {
+	out, err := exec.Output(exec.Command(binaryName, "system", "property", "ls"))
+	if err != nil {
+		return ""
+	}
+	m := dnsDomainRegexp.FindSubmatch(out)
+	if m == nil {
+		return ""
+	}
+	domain := string(m[1])
+	// verify the domain is registered with the embedded DNS service
+	lines, err := exec.OutputLines(exec.Command(binaryName, "system", "dns", "ls"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range lines {
+		if strings.TrimSpace(line) == domain {
+			return domain
+		}
+	}
+	return ""
 }
 
 // containerInspect models the JSON output of `container inspect` and

@@ -174,8 +174,17 @@ func (p *provider) GetAPIServerInternalEndpoint(cluster string) (string, error) 
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get api server endpoint")
 	}
-	// NOTE: the apple container runtime does not provide name resolution
-	// between containers, so we use the node IP rather than its hostname
+	// when the runtime's local DNS domain is set up, node hostnames
+	// resolve between containers and track IP changes across restarts
+	if domain := defaultDNSDomain(); domain != "" {
+		return net.JoinHostPort(
+			fmt.Sprintf("%s.%s", n.String(), domain),
+			fmt.Sprintf("%d", common.APIServerInternalPort),
+		), nil
+	}
+	// otherwise fall back to the node IP. NOTE: IPs are reassigned on
+	// container restart, so multi-node clusters created this way do not
+	// survive node restarts.
 	ipv4, ipv6, err := n.IP()
 	if err != nil {
 		return "", errors.Wrap(err, "failed to get api server IP")
