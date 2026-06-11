@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/kind/pkg/cluster/internal/kubeconfig"
 	internallogs "sigs.k8s.io/kind/pkg/cluster/internal/logs"
 	internalproviders "sigs.k8s.io/kind/pkg/cluster/internal/providers"
+	"sigs.k8s.io/kind/pkg/cluster/internal/providers/applecontainer"
 	"sigs.k8s.io/kind/pkg/cluster/internal/providers/common"
 	"sigs.k8s.io/kind/pkg/cluster/internal/providers/docker"
 	"sigs.k8s.io/kind/pkg/cluster/internal/providers/nerdctl"
@@ -125,6 +126,9 @@ func DetectNodeProvider() (ProviderOption, error) {
 	if podman.IsAvailable() {
 		return ProviderWithPodman(), nil
 	}
+	if applecontainer.IsAvailable() {
+		return ProviderWithAppleContainer(), nil
+	}
 	return nil, errors.WithStack(NoNodeProviderDetectedError)
 }
 
@@ -178,6 +182,14 @@ func ProviderWithPodman() ProviderOption {
 func ProviderWithNerdctl(binaryName string) ProviderOption {
 	return providerRuntimeOption(func(p *Provider) {
 		p.provider = nerdctl.NewProvider(p.logger, binaryName)
+	})
+}
+
+// ProviderWithAppleContainer configures the provider to use the Apple
+// container runtime (https://github.com/apple/container)
+func ProviderWithAppleContainer() ProviderOption {
+	return providerRuntimeOption(func(p *Provider) {
+		p.provider = applecontainer.NewProvider(p.logger)
 	})
 }
 
