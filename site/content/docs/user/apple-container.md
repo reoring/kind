@@ -102,6 +102,42 @@ container start kind-control-plane
 container start kind-worker
 {{< /codeFromInline >}}
 
+## High-availability clusters
+
+Clusters with multiple control-plane nodes require the local DNS domain
+described above — the external load balancer (envoy) resolves the
+control-plane nodes by name and re-resolves them when their addresses
+change. Without the domain configured, creating an HA cluster fails with an
+error explaining the setup.
+
+API server failover works as on other providers: stopping a control-plane
+node removes it from the load balancer rotation and `kubectl` keeps working
+through the remaining control-planes.
+
+Restarting a control-plane node is where this provider differs: the node
+comes back with a new IP address, and while the load balancer follows the
+change automatically, etcd does not — the cluster's member record still
+holds the old peer address, and the node's etcd certificates do not cover
+the new address. The cluster stays available (quorum permitting), but the
+restarted control-plane stays `NotReady` until you repair it:
+
+{{< codeFromInline lang="bash" >}}
+# 1. find the member ID and update its peer URL (run on a healthy control-plane)
+container exec <healthy-control-plane> sh -c 'ETCD=$(crictl ps --name etcd -q); crictl exec $ETCD etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key member list'
+container exec <healthy-control-plane> sh -c '... member update <member-id> --peer-urls=https://<new-ip>:2380'
+
+# 2. regenerate the etcd certificates on the restarted node and restart etcd
+container exec <restarted-control-plane> sh -c 'rm /etc/kubernetes/pki/etcd/peer.* /etc/kubernetes/pki/etcd/server.* && \
+  kubeadm init phase certs etcd-peer && kubeadm init phase certs etcd-server && \
+  crictl rm -f $(crictl ps --name etcd -q)'
+{{< /codeFromInline >}}
+
+The node returns to `Ready` within a couple of minutes.
+
 ## Loading images
 
 `kind load docker-image` requires the docker CLI and does not work with this
@@ -114,8 +150,8 @@ KIND_EXPERIMENTAL_PROVIDER=container kind load image-archive my-image.tar
 
 ## Known limitations
 
-- High-availability clusters (multiple control-plane nodes) are not yet
-  supported.
+- High-availability clusters require the local DNS domain, and a restarted
+  control-plane node needs the manual etcd repair described above.
 - `kind build node-image` requires docker and cannot be used with this
   provider.
 - `extraMounts` are virtiofs shares: mount propagation and SELinux options

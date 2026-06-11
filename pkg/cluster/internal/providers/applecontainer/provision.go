@@ -25,10 +25,12 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/kind/pkg/cluster/constants"
 	"sigs.k8s.io/kind/pkg/errors"
 	"sigs.k8s.io/kind/pkg/exec"
 	"sigs.k8s.io/kind/pkg/fs"
 
+	"sigs.k8s.io/kind/pkg/cluster/internal/loadbalancer"
 	"sigs.k8s.io/kind/pkg/cluster/internal/providers/common"
 	"sigs.k8s.io/kind/pkg/internal/apis/config"
 )
@@ -51,10 +53,16 @@ func planCreation(cfg *config.Cluster, networkName string) (createContainerFuncs
 		names[i] = name
 	}
 
-	// the external load balancer requires node name resolution between
-	// containers, which the apple container runtime does not provide yet
-	if config.ClusterHasImplicitLoadBalancer(cfg) {
-		return nil, errors.New("multiple control-plane nodes (HA) are not yet supported by the apple container provider")
+	// the external load balancer resolves control-plane nodes by name
+	// (envoy STRICT_DNS), which requires the runtime's local DNS domain
+	haveLoadbalancer := config.ClusterHasImplicitLoadBalancer(cfg)
+	if haveLoadbalancer {
+		if defaultDNSDomain() == "" {
+			return nil, errors.New("multiple control-plane nodes (HA) require the runtime's local DNS domain: " +
+				"run `sudo container system dns create <domain>`, set it as [dns] domain in ~/.config/container/config.toml, " +
+				"and restart the runtime with `container system stop && container system start`")
+		}
+		names = append(names, nodeNamer(constants.ExternalLoadBalancerNodeRoleValue))
 	}
 
 	genericArgs, err := commonArgs(cfg.Name, cfg, networkName, names)
@@ -64,6 +72,24 @@ func planCreation(cfg *config.Cluster, networkName string) (createContainerFuncs
 
 	apiServerPort := cfg.Networking.APIServerPort
 	apiServerAddress := cfg.Networking.APIServerAddress
+	if haveLoadbalancer {
+		// only the external LB reflects the API server port, the
+		// control-plane nodes are published on random host ports
+		apiServerPort = 0
+		apiServerAddress = "127.0.0.1"
+		if cfg.Networking.IPFamily == config.IPv6Family {
+			apiServerAddress = "::1"
+		}
+		// plan loadbalancer node
+		name := names[len(names)-1]
+		createContainerFuncs = append(createContainerFuncs, func() error {
+			args, err := runArgsForLoadBalancer(cfg, name, genericArgs)
+			if err != nil {
+				return err
+			}
+			return createContainer(name, args)
+		})
+	}
 
 	// plan normal nodes
 	for i, node := range cfg.Nodes {
@@ -177,6 +203,41 @@ func runArgsForNode(node *config.Node, clusterIPFamily config.ClusterIPFamily, n
 	// finally, specify the image to run
 	_, image := sanitizeImage(node.Image)
 	return append(args, image), nil
+}
+
+func runArgsForLoadBalancer(cfg *config.Cluster, name string, args []string) ([]string, error) {
+	args = append([]string{
+		// label the node with the role ID
+		"--label", fmt.Sprintf("%s=%s", nodeRoleLabelKey, constants.ExternalLoadBalancerNodeRoleValue),
+	},
+		args...,
+	)
+
+	// load balancer port mapping
+	mappingArgs, err := generatePortMappings(cfg.Networking.IPFamily,
+		config.PortMapping{
+			ListenAddress: cfg.Networking.APIServerAddress,
+			HostPort:      cfg.Networking.APIServerPort,
+			ContainerPort: common.APIServerInternalPort,
+		},
+	)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, mappingArgs...)
+
+	// finally, specify the image to run and its bootstrap command
+	_, image := sanitizeImage(loadbalancer.Image)
+	args = append(args, image)
+	args = append(args, loadbalancer.GenerateBootstrapCommand(cfg.Name, name)...)
+
+	return args, nil
+}
+
+// createContainer creates a container without waiting for it to boot,
+// used for the external load balancer which does not run systemd
+func createContainer(name string, args []string) error {
+	return exec.Command(binaryName, append([]string{"run", "--name", name}, args...)...).Run()
 }
 
 // nodeMemory returns the memory to allocate to each node VM
