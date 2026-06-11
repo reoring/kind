@@ -54,9 +54,12 @@ address changed. There are two modes:
 - **Default (no DNS domain configured)**: the provider embeds the
   control-plane IP into the cluster configuration. The cluster works until
   its node VMs are stopped — after a restart (including a host reboot or
-  `container system stop`), worker nodes can no longer reach the API server
-  and the cluster must be recreated. Single-node clusters are unaffected and
-  survive restarts.
+  `container system stop`), the cluster breaks and must be recreated:
+  workers can no longer reach the API server, and even on single-node
+  clusters the kubeadm-generated configuration stored inside the cluster
+  (e.g. the kube-proxy kubeconfig) still points at the old address, so
+  pods lose access to the API service and CoreDNS stops reporting ready,
+  even though `kubectl` from the host keeps working.
 
 - **With a local DNS domain**: the provider uses node hostnames such as
   `kind-control-plane.<domain>` instead of IPs. Hostnames track address
