@@ -168,11 +168,14 @@ wait for 30 seconds, do `--wait 30s`, for 5 minutes do `--wait 5m`, etc.
 
 More usage can be discovered with `kind create cluster --help`.
 
-kind can auto-detect the [docker], [podman], or [nerdctl] installed and choose the available one. If you want to turn off the auto-detect, use the environment variable `KIND_EXPERIMENTAL_PROVIDER=docker`, `KIND_EXPERIMENTAL_PROVIDER=podman` or `KIND_EXPERIMENTAL_PROVIDER=nerdctl` to
+kind can auto-detect the [docker], [podman], [nerdctl], or [Apple container] installed and choose the available one. If you want to turn off the auto-detect, use the environment variable `KIND_EXPERIMENTAL_PROVIDER=docker`, `KIND_EXPERIMENTAL_PROVIDER=podman`, `KIND_EXPERIMENTAL_PROVIDER=nerdctl` or `KIND_EXPERIMENTAL_PROVIDER=container` to
 select the runtime.
 
 > **NOTE**: podman and nerdctl operate in [rootless mode](/docs/user/rootless) by default. Extra
 > setup is needed for KIND clusters to be fully functional.
+
+> **NOTE**: the [Apple container](/docs/user/apple-container) provider is experimental and has
+> additional setup requirements for multi-node clusters.
 
 ## Interacting With Your Cluster
 
@@ -500,6 +503,7 @@ kind, the Kubernetes cluster itself, etc.
 [docker]: https://www.docker.com/
 [podman]: https://podman.io/
 [nerdctl]: https://github.com/containerd/nerdctl
+[Apple container]: https://github.com/apple/container
 [known issues]: /docs/user/known-issues
 [releases]: https://github.com/kubernetes-sigs/kind/releases
 [node image]: /docs/design/node-image
