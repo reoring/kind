@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -82,32 +82,46 @@ func pull(logger log.Logger, image string, retries int) error {
 // the runtime pullable image name from the provided image.
 //
 // The Apple container CLI requires fully qualified image references,
-// so we qualify unqualified references with docker.io. When a digest
-// is present we also drop the tag, since the runtime stores digest
-// references without tags.
+// so unqualified references are qualified with docker.io. When a
+// digest is present the tag is dropped, since the runtime stores
+// digest references without tags. This matches the podman provider.
 func sanitizeImage(image string) (friendlyImageName, pullImageName string) {
-	const docker = "docker.io/"
+	const (
+		defaultDomain    = "docker.io/"
+		officialRepoName = "library"
+	)
 
-	friendlyImageName = image
-	pullImageName = image
+	var remainder string
 
 	if strings.Contains(image, "@sha256:") {
-		splits := strings.Split(image, "@sha256:")
+		splits := strings.SplitN(image, "@sha256:", 2)
 		friendlyImageName = splits[0]
-		// drop the tag when pulling by digest, e.g.
-		// kindest/node:v1.36.1@sha256:... => kindest/node@sha256:...
-		tagSplits := strings.Split(splits[0], ":")
-		pullImageName = tagSplits[0] + "@sha256:" + splits[1]
+		remainder = stripTag(splits[0]) + "@sha256:" + splits[1]
+	} else {
+		friendlyImageName = image
+		remainder = image
 	}
 
-	// qualify the reference with a registry host if it lacks one
-	firstComponent := strings.SplitN(pullImageName, "/", 2)[0]
-	isHost := strings.ContainsAny(firstComponent, ".:") || firstComponent == "localhost"
-	if !strings.Contains(pullImageName, "/") {
-		pullImageName = docker + "library/" + pullImageName
-	} else if !isHost {
-		pullImageName = docker + pullImageName
+	if !strings.ContainsRune(remainder, '/') {
+		remainder = officialRepoName + "/" + remainder
 	}
 
-	return friendlyImageName, pullImageName
+	i := strings.IndexRune(friendlyImageName, '/')
+	if i == -1 || (!strings.ContainsAny(friendlyImageName[:i], ".:") && friendlyImageName[:i] != "localhost") {
+		pullImageName = defaultDomain + remainder
+	} else {
+		pullImageName = remainder
+	}
+
+	return
+}
+
+// stripTag removes the tag from an image reference, if present
+func stripTag(image string) string {
+	lastSlash := strings.LastIndex(image, "/")
+	lastColon := strings.LastIndex(image, ":")
+	if lastColon > lastSlash {
+		return image[:lastColon]
+	}
+	return image
 }

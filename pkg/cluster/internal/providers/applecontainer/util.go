@@ -1,5 +1,5 @@
 /*
-Copyright 2026 The Kubernetes Authors.
+Copyright The Kubernetes Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -54,21 +54,27 @@ var dnsDomainRegexp = regexp.MustCompile(`(?s)\[dns\][^[]*?domain\s*=\s*"([^"]+)
 // multi-node clusters working across container restarts (IPs are
 // reassigned on restart, names are not).
 func defaultDNSDomain() string {
-	out, err := exec.Output(exec.Command(binaryName, "system", "property", "ls"))
+	properties, err := exec.Output(exec.Command(binaryName, "system", "property", "ls"))
 	if err != nil {
 		return ""
 	}
-	m := dnsDomainRegexp.FindSubmatch(out)
+	// the registered domains, one per line after a header line
+	registered, err := exec.OutputLines(exec.Command(binaryName, "system", "dns", "ls"))
+	if err != nil {
+		return ""
+	}
+	return chooseDNSDomain(properties, registered)
+}
+
+// chooseDNSDomain returns the default DNS domain from the runtime
+// properties TOML if that domain is also registered, else ""
+func chooseDNSDomain(propertiesTOML []byte, registeredDomains []string) string {
+	m := dnsDomainRegexp.FindSubmatch(propertiesTOML)
 	if m == nil {
 		return ""
 	}
 	domain := string(m[1])
-	// verify the domain is registered with the embedded DNS service
-	lines, err := exec.OutputLines(exec.Command(binaryName, "system", "dns", "ls"))
-	if err != nil {
-		return ""
-	}
-	for _, line := range lines {
+	for _, line := range registeredDomains {
 		if strings.TrimSpace(line) == domain {
 			return domain
 		}
